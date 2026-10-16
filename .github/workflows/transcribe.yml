@@ -1,0 +1,101 @@
+name: Autonomous Cloud Subtitles & Alignment Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio_name:
+        description: 'Audio Filename (uploaded to release or repo)'
+        required: true
+        default: 'input_audio.wav'
+      model:
+        description: 'Whisper Model Size'
+        required: false
+        default: 'large-v3-turbo'
+        type: choice
+        options:
+          - 'tiny'
+          - 'base'
+          - 'small'
+          - 'medium'
+          - 'large-v3-turbo'
+      task:
+        description: 'Task Mode'
+        required: false
+        default: 'transcribe'
+        type: choice
+        options:
+          - 'transcribe'
+          - 'align'
+      output_format:
+        description: 'Subtitle Output Formats'
+        required: false
+        default: 'all'
+      language:
+        description: 'Language Code (e.g. en, auto)'
+        required: false
+        default: 'auto'
+
+permissions:
+  contents: write
+
+jobs:
+  transcribe_cloud:
+    name: Autonomous Whisper Subtitle Cloud Runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Up to 6 hours continuous execution (zero PC dependency)
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install System Audio Tools (FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Subtitle Engine Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install faster-whisper
+
+      - name: Download Audio Asset from Staging Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p input_audio output_subtitles
+          gh release download cloud-input --pattern "${{ github.event.inputs.audio_name }}" --dir input_audio || true
+          if [ ! -f "input_audio/${{ github.event.inputs.audio_name }}" ]; then
+            echo "Audio not found in release staging, checking repository workspace..."
+            find . -name "${{ github.event.inputs.audio_name }}" -exec cp {} input_audio/ \; || true
+          fi
+
+      - name: Execute Whisper Subtitles Pro Engine
+        run: |
+          python -m whisper_subtitles.cli transcribe \
+            "input_audio/${{ github.event.inputs.audio_name }}" \
+            --model "${{ github.event.inputs.model }}" \
+            --format "${{ github.event.inputs.output_format }}" \
+            --output-dir "output_subtitles" \
+            --language "${{ github.event.inputs.language }}"
+
+      - name: Upload Subtitle Artifacts to GitHub Run
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtitles-${{ github.event.inputs.audio_name }}
+          path: output_subtitles/*
+
+      - name: Publish Generated Subtitles to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view subtitle-outputs || gh release create subtitle-outputs --title "Synchronized Subtitle Outputs" --notes "Automated cloud subtitle builds"
+          gh release upload subtitle-outputs output_subtitles/* --clobber || true

@@ -1,0 +1,8 @@
+# Core Requirements
+requests>=2.28.0
+google-genai>=0.1.0
+
+# Optional High-Performance Neural Speech Models
+# (Uncomment below if running full local Whisper GPU/CPU inference without Gemini or cloud runner)
+# faster-whisper>=1.0.0
+# torch>=2.0.0
