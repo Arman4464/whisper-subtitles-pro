@@ -135,22 +135,47 @@ class UniversalTranscriber:
             "Example: [{\"start\": 0.0, \"end\": 2.45, \"text\": \"Hello and welcome to the course.\"}]"
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_bytes(data=audio_bytes, mime_type=mime),
-                        types.Part.from_text(text=prompt)
-                    ]
-                )
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.0
-            )
-        )
+        models_to_try = [
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite"
+        ]
+        response = None
+        last_err = None
+
+        for m_name in models_to_try:
+            for attempt in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=m_name,
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_bytes(data=audio_bytes, mime_type=mime),
+                                    types.Part.from_text(text=prompt)
+                                ]
+                            )
+                        ],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0.0
+                        )
+                    )
+                    if response and response.text:
+                        break
+                except Exception as e:
+                    last_err = e
+                    # If 503 high demand spike, brief backoff before trying next
+                    import time
+                    time.sleep(1.0)
+                    continue
+            if response and response.text:
+                break
+
+        if response is None or not response.text:
+            raise RuntimeError(f"Gemini speech transcription failed across all candidate models: {last_err}")
 
         raw_json = response.text.strip()
         # Clean markdown code fences if present (e.g. ```json ... ```)
