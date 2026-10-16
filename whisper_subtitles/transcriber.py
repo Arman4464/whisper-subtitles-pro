@@ -153,11 +153,36 @@ class UniversalTranscriber:
         )
 
         raw_json = response.text.strip()
-        data = json.loads(raw_json)
-        
+        # Clean markdown code fences if present (e.g. ```json ... ```)
+        if "```" in raw_json:
+            fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_json)
+            if fence_match:
+                raw_json = fence_match.group(1).strip()
+
+        try:
+            data = json.loads(raw_json)
+        except Exception as e:
+            raise RuntimeError(f"Gemini returned invalid JSON for subtitles: {e}\nRaw output: {raw_json[:300]}")
+
+        # If model returned a dictionary wrapper (e.g. {"subtitles": [...]}, {"segments": [...]})
+        if isinstance(data, dict):
+            for candidate in ["subtitles", "segments", "transcript", "transcription", "results", "cues", "data"]:
+                if candidate in data and isinstance(data[candidate], list):
+                    data = data[candidate]
+                    break
+            else:
+                for val in data.values():
+                    if isinstance(val, list):
+                        data = val
+                        break
+                else:
+                    data = [data]
+
         segments = []
         for idx, item in enumerate(data, start=1):
-            text = item.get("text", "").strip()
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or item.get("sentence") or item.get("content") or "").strip()
             start = float(item.get("start", 0.0))
             end = float(item.get("end", start + 2.0))
             

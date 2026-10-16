@@ -154,18 +154,23 @@ def run_transcribe(args):
     ])
 
 def run_align(args):
+    transcript_path = getattr(args, "transcript_flag", None) or getattr(args, "transcript", None)
+    if not transcript_path:
+        print_error("Transcript file path is required. Usage: wsub align <audio> <transcript.txt> OR --transcript <transcript.txt>")
+        sys.exit(1)
+
     print_info(f"Audio File: {colorize(args.audio, 'white', True)}")
-    print_info(f"Transcript: {colorize(args.transcript, 'white', True)}")
+    print_info(f"Transcript: {colorize(transcript_path, 'white', True)}")
     print_info("Method: Mathematical Forced Alignment (100% Deterministic, 0.00% Drift)")
 
     if not os.path.exists(args.audio):
         print_error(f"Audio not found: {args.audio}")
         sys.exit(1)
-    if not os.path.exists(args.transcript):
-        print_error(f"Transcript not found: {args.transcript}")
+    if not os.path.exists(transcript_path):
+        print_error(f"Transcript not found: {transcript_path}")
         sys.exit(1)
 
-    with open(args.transcript, "r", encoding="utf-8") as f:
+    with open(transcript_path, "r", encoding="utf-8") as f:
         text_content = f.read()
 
     out_dir = args.output_dir or os.path.dirname(os.path.abspath(args.audio)) or "."
@@ -331,7 +336,8 @@ def main():
     # Command: align
     p_align = subparsers.add_parser("align", help="Forced alignment of audio with known transcript (0.00%% drift)")
     p_align.add_argument("audio", help="Path to audio file (.wav, .mp3)")
-    p_align.add_argument("transcript", help="Path to reference transcript (.txt)")
+    p_align.add_argument("transcript", nargs="?", default=None, help="Path to reference transcript (.txt)")
+    p_align.add_argument("--transcript", "-t", dest="transcript_flag", default=None, help="Path to reference transcript (.txt)")
     p_align.add_argument("--format", "-f", default="all", help="Output formats: srt, vtt, json, lrc, all")
     p_align.add_argument("--output-dir", "-o", default="", help="Directory to save aligned subtitles")
     p_align.add_argument("--max-cpl", type=int, default=42, help="Max characters per line")

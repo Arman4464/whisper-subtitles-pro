@@ -13,6 +13,7 @@ setup(
     install_requires=[
         "google-genai>=0.1.0",
         "requests>=2.28.0",
+        "miniaudio>=1.59",
     ],
     extras_require={
         "local": [

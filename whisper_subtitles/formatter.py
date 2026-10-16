@@ -42,12 +42,32 @@ class SubtitleFormatter:
 
     def wrap_text(self, text: str) -> str:
         """
-        Wraps long subtitle lines into readable 1-2 line blocks respecting max_cpl.
+        Wraps long subtitle lines into readable blocks strictly respecting max_cpl.
         """
         words = text.split()
         if not words:
             return ""
 
+        full_text = " ".join(words)
+        if len(full_text) <= self.max_cpl:
+            return full_text
+
+        # If it fits within 2 lines, balance them cleanly near the middle
+        if self.max_lines == 2 and len(full_text) <= self.max_cpl * 2:
+            best_split = len(words) // 2
+            min_diff = float("inf")
+            for split_idx in range(1, len(words)):
+                l1 = " ".join(words[:split_idx])
+                l2 = " ".join(words[split_idx:])
+                if len(l1) <= self.max_cpl and len(l2) <= self.max_cpl:
+                    diff = abs(len(l1) - len(l2))
+                    if diff < min_diff:
+                        min_diff = diff
+                        best_split = split_idx
+            if min_diff != float("inf"):
+                return f"{' '.join(words[:best_split])}\n{' '.join(words[best_split:])}"
+
+        # Standard greedy word-wrap strictly enforcing max_cpl per line
         lines = []
         current_line = []
         current_len = 0
@@ -64,14 +84,6 @@ class SubtitleFormatter:
 
         if current_line:
             lines.append(" ".join(current_line))
-
-        # Enforce max lines
-        if len(lines) > self.max_lines:
-            # Rebalance into max_lines
-            half = len(words) // 2
-            l1 = " ".join(words[:half])
-            l2 = " ".join(words[half:])
-            return f"{l1}\n{l2}"
 
         return "\n".join(lines)
 

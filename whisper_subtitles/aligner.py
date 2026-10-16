@@ -19,22 +19,76 @@ class ForcedAligner:
     @staticmethod
     def read_audio_pcm(audio_path: str) -> Tuple[bytes, int, int, float]:
         """
-        Reads audio file and extracts PCM bytes, sample rate, channels, and duration.
-        Supports WAV directly, or uses ffmpeg / soundfile if present.
+        Reads audio file and extracts mono 16-bit PCM bytes, sample rate, channels, and duration.
+        Supports MP3, WAV, FLAC, OGG via miniaudio (pure C/Python), or built-in wave module,
+        or ffmpeg subprocess fallback.
         """
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+
+        # 1. Primary: miniaudio decoder (cross-platform, zero system dependencies)
+        try:
+            import miniaudio
+            decoded = miniaudio.decode_file(
+                audio_path,
+                output_format=miniaudio.SampleFormat.SIGNED16,
+                nchannels=1,
+                sample_rate=16000
+            )
+            pcm_bytes = decoded.samples.tobytes()
+            sr = 16000
+            channels = 1
+            duration = decoded.duration
+            return pcm_bytes, sr, channels, duration
+        except Exception:
+            pass
+
+        # 2. Secondary: Standard library wave module for WAV files
         if audio_path.lower().endswith(".wav"):
             try:
                 with wave.open(audio_path, "rb") as wf:
                     channels = wf.getnchannels()
                     sr = wf.getframerate()
                     nframes = wf.getnframes()
-                    pcm_bytes = wf.readframes(nframes)
-                    duration = nframes / float(sr)
-                    return pcm_bytes, sr, channels, duration
+                    sampwidth = wf.getsampwidth()
+                    raw = wf.readframes(nframes)
+                    duration = nframes / float(sr) if sr > 0 else 0.0
+
+                    # Convert multi-channel or varying bit-depth to mono 16-bit signed PCM
+                    if sampwidth == 2 and channels == 1:
+                        return raw, sr, 1, duration
+                    elif sampwidth == 2 and channels > 1:
+                        # Downmix stereo/multi-channel to mono
+                        total_samples = len(raw) // 2
+                        samples = struct.unpack(f"<{total_samples}h", raw)
+                        mono = []
+                        for i in range(0, total_samples, channels):
+                            chan_avg = sum(samples[i:i + channels]) // channels
+                            mono.append(chan_avg)
+                        mono_pcm = struct.pack(f"<{len(mono)}h", *mono)
+                        return mono_pcm, sr, 1, duration
+                    elif sampwidth == 1:
+                        # 8-bit unsigned PCM (0-255) -> 16-bit signed (-32768 to 32767)
+                        samples = [(b - 128) * 256 for b in raw]
+                        if channels > 1:
+                            samples = [sum(samples[i:i + channels]) // channels for i in range(0, len(samples), channels)]
+                        mono_pcm = struct.pack(f"<{len(samples)}h", *samples)
+                        return mono_pcm, sr, 1, duration
+                    elif sampwidth == 3:
+                        # 24-bit PCM -> 16-bit
+                        samples = []
+                        for i in range(0, len(raw), 3):
+                            b = raw[i:i + 3]
+                            val = int.from_bytes(b, byteorder="little", signed=True) >> 8
+                            samples.append(val)
+                        if channels > 1:
+                            samples = [sum(samples[i:i + channels]) // channels for i in range(0, len(samples), channels)]
+                        mono_pcm = struct.pack(f"<{len(samples)}h", *samples)
+                        return mono_pcm, sr, 1, duration
             except Exception:
                 pass
 
-        # Fallback via ffmpeg subprocess to convert to 16kHz mono WAV PCM
+        # 3. Tertiary: ffmpeg subprocess fallback
         import subprocess
         cmd = [
             "ffmpeg", "-y", "-i", audio_path,
@@ -45,10 +99,18 @@ class ForcedAligner:
             pcm_bytes = p.stdout
             sr = 16000
             channels = 1
-            duration = len(pcm_bytes) / (sr * 2)
+            duration = len(pcm_bytes) / (sr * 2) if sr > 0 else 0.0
             return pcm_bytes, sr, channels, duration
-        except Exception as e:
-            raise RuntimeError(f"Could not read audio file {audio_path}: {e}")
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            f"Could not read audio file '{audio_path}'.\n"
+            "Supported formats: WAV (natively), or MP3/FLAC/OGG.\n"
+            "To decode MP3/compressed audio without external tools, install miniaudio:\n"
+            "    pip install miniaudio\n"
+            "Or install ffmpeg on your system PATH."
+        )
 
     @staticmethod
     def compute_frame_energy(pcm_bytes: bytes, frame_size: int = 320) -> List[float]:
